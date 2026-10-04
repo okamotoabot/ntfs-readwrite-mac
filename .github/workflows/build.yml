@@ -7,9 +7,26 @@ on:
 
 jobs:
   build:
-    runs-on: macos-14
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Show default environment
+        run: |
+          sw_vers
+          xcodebuild -version
+          xcrun --show-sdk-version
+
+      - name: Select newest Xcode available
+        run: |
+          ls -d /Applications/Xcode*.app 2>/dev/null | sort -V || true
+          NEWEST=$(ls -d /Applications/Xcode*.app 2>/dev/null | sort -V | tail -1 || echo "")
+          if [ -n "$NEWEST" ]; then
+            echo "Selecting $NEWEST"
+            sudo xcode-select -s "$NEWEST/Contents/Developer"
+          fi
+          xcodebuild -version
+          xcrun --show-sdk-version
 
       - name: Build (bash build.sh)
         run: bash build.sh
