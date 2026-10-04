@@ -322,13 +322,16 @@ final class VolumeManager {
           exit 0
         fi
         """)
-        // 2) 内置驱动：mount -t ntfs -o rw（含竞态重试）
+        // 2) 内置驱动：mount -t ntfs -o rw（在 26/27 上可能静默按只读挂载，必须校验）
         parts.append("""
         for i in 1 2 3; do
           /usr/sbin/diskutil unmount \(mp) >/dev/null 2>&1
           /bin/mkdir -p \(mp)
           if /sbin/mount -t ntfs -o rw \(dev) \(mp); then
-            exit 0
+            LINE2=$(/sbin/mount | /usr/bin/grep -F \(Shell.shq("on \(v.mountPath) (")) || true)
+            if [ -n "$LINE2" ] && ! echo "$LINE2" | /usr/bin/grep -q 'read-only'; then
+              exit 0
+            fi
           fi
           sleep 1
         done
@@ -336,7 +339,7 @@ final class VolumeManager {
         // 3) 用户态引擎：ntfs-3g + FUSE-T（macOS 26/27 的主力方案）
         parts.append("""
         if [ -x /usr/local/bin/ntfs-3g ] && [ -e /usr/local/lib/libfuse-t.dylib ]; then
-          /usr/sbin/diskutil unmount \(mp) >/dev/null 2>&1
+          /usr/sbin/diskutil unmount force \(mp) >/dev/null 2>&1
           /bin/mkdir -p \(mp)
           if /usr/local/bin/ntfs-3g \(dev) \(mp) -o \(Shell.shq("volname=\(volname),allow_other")); then
             exit 0
