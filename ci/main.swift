@@ -59,7 +59,20 @@ let work = "/tmp/ntfsrw-e2e"
 print("=== NTFS 读写助手 端到端功能测试 ===")
 print("engine installed: \(vm.engineInstalled())")
 
-check("引擎已安装") { vm.engineInstalled() }
+check("模拟全新机器：移除 FUSE-T") {
+    _ = run("/opt/homebrew/bin/brew", ["uninstall", "--cask", "fuse-t"])
+    try? Shell.admin("""
+    /bin/rm -rf /usr/local/lib/libfuse-t.dylib /usr/local/lib/libfuse3.dylib /usr/local/lib/libfuse3.4.dylib /Library/Filesystems/fuse-t.fs
+    """)
+    return !vm.engineInstalled()
+}
+
+check("引擎安装器自动安装 FUSE-T + 引擎文件") {
+    try vm.installEngine()
+    return vm.engineInstalled()
+}
+
+check("引擎自检可运行") { vm.engineInstalled() }
 
 // ---------- 场景一：模拟插入 NTFS 磁盘（内置驱动只读挂载）→ 一键读写 ----------
 var dev = ""
