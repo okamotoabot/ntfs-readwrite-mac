@@ -334,7 +334,18 @@ final class VolumeManager {
         let volname = v.name.replacingOccurrences(of: "/", with: ":")
 
         var parts: [String] = []
-        // 1) 内置驱动：写 fstab（幂等）+ diskutil 重挂载
+        // 1) 自带引擎优先：ntfs-3g + FUSE-T（完全不依赖系统内置 NTFS 驱动）
+        parts.append("""
+        if [ -x /usr/local/bin/ntfs-3g ] && [ -e /usr/local/lib/libfuse-t.dylib ]; then
+          /usr/sbin/diskutil unmount force \(mp) >/dev/null 2>&1
+          /bin/mkdir -p \(mp)
+          if /usr/local/bin/ntfs-3g \(dev) \(mp) -o \(Shell.shq("volname=\(volname),allow_other")); then
+            sleep 1
+            exit 0
+          fi
+        fi
+        """)
+        // 2) 内置驱动回退（旧系统）：写 fstab（幂等）+ diskutil 重挂载
         if let uuid = uuid {
             parts.append("""
             if ! /usr/bin/grep -q '^UUID=\(uuid.uppercased())[[:space:]]' /etc/fstab 2>/dev/null; then
@@ -350,7 +361,7 @@ final class VolumeManager {
           exit 0
         fi
         """)
-        // 2) 内置驱动：mount -t ntfs -o rw（在 26/27 上可能静默按只读挂载，必须校验）
+        // 3) 内置驱动：mount -t ntfs -o rw（在 26/27 上可能静默按只读挂载，必须校验）
         parts.append("""
         for i in 1 2 3; do
           /usr/sbin/diskutil unmount \(mp) >/dev/null 2>&1
@@ -363,17 +374,6 @@ final class VolumeManager {
           fi
           sleep 1
         done
-        """)
-        // 3) 用户态引擎：ntfs-3g + FUSE-T（macOS 26/27 的主力方案）
-        parts.append("""
-        if [ -x /usr/local/bin/ntfs-3g ] && [ -e /usr/local/lib/libfuse-t.dylib ]; then
-          /usr/sbin/diskutil unmount force \(mp) >/dev/null 2>&1
-          /bin/mkdir -p \(mp)
-          if /usr/local/bin/ntfs-3g \(dev) \(mp) -o \(Shell.shq("volname=\(volname),allow_other")); then
-            sleep 1
-            exit 0
-          fi
-        fi
         """)
         // 4) 全部失败：回滚 fstab，恢复只读挂载
         parts.append("""
