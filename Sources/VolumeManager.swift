@@ -237,32 +237,50 @@ final class VolumeManager {
             && fm.fileExists(atPath: "/usr/local/lib/libfuse-t.dylib")
     }
 
-    /// 把随 App 内置的引擎文件安装到 /usr/local（需要管理员授权一次）。
+    /// 安装用户态引擎：先装捆绑的 FUSE-T 官方 pkg（如缺失），再复制引擎文件，最后自检。
+    /// 全程离线可用，不依赖 Homebrew。
     func installEngine() throws {
-        guard let res = Bundle.main.resourceURL else {
+        let engineURL: URL
+        if let override = ProcessInfo.processInfo.environment["NTFSRW_ENGINE_DIR"] {
+            engineURL = URL(fileURLWithPath: override)
+        } else if let res = Bundle.main.resourceURL {
+            engineURL = res.appendingPathComponent("engine")
+        } else {
             throw NTFSOpError.commandFailed("无法定位应用资源目录。")
         }
-        let engine = res.appendingPathComponent("engine")
-        guard FileManager.default.fileExists(atPath: engine.appendingPathComponent("bin/ntfs-3g").path) else {
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: engineURL.appendingPathComponent("bin/ntfs-3g").path) else {
             throw NTFSOpError.commandFailed("""
             本应用内没有内置引擎文件。
             若是本地构建：请先运行 ci/build_engine.sh 生成 Resources/engine 后重新打包。
             """)
         }
-        let src = Shell.shq(engine.path)
-        let script = """
-        /bin/mkdir -p /usr/local/bin /usr/local/sbin /usr/local/lib
-        /bin/cp \(src)/bin/ntfs-3g /usr/local/bin/ntfs-3g
-        /bin/cp \(src)/bin/lowntfs-3g /usr/local/bin/lowntfs-3g 2>/dev/null || true
-        /bin/cp \(src)/bin/ntfsfix /usr/local/bin/ntfsfix 2>/dev/null || true
-        /bin/cp \(src)/sbin/mkntfs /usr/local/sbin/mkntfs 2>/dev/null || true
-        /bin/cp \(src)/lib/libntfs-3g* /usr/local/lib/ 2>/dev/null || true
-        /bin/chmod 755 /usr/local/bin/ntfs-3g /usr/local/bin/lowntfs-3g /usr/local/bin/ntfsfix /usr/local/sbin/mkntfs 2>/dev/null || true
-        """
-        try Shell.admin(script)
+
+        var steps: [String] = ["/bin/mkdir -p /usr/local/bin /usr/local/sbin /usr/local/lib"]
+        // FUSE-T 缺失时先安装捆绑的官方 pkg
+        let pkg = engineURL.appendingPathComponent("FUSE-T.pkg")
+        if !fm.fileExists(atPath: "/usr/local/lib/libfuse-t.dylib") {
+            guard fm.fileExists(atPath: pkg.path) else {
+                throw NTFSOpError.commandFailed("""
+                应用内未找到 FUSE-T 安装包（FUSE-T.pkg）。
+                请到 https://github.com/macos-fuse-t/fuse-t/releases 手动安装 FUSE-T 后重试。
+                """)
+            }
+            steps.append("/usr/sbin/installer -pkg \(Shell.shq(pkg.path)) -target /")
+        }
+        let src = Shell.shq(engineURL.path)
+        steps.append(contentsOf: [
+            "/bin/cp \(src)/bin/ntfs-3g /usr/local/bin/ntfs-3g",
+            "/bin/cp \(src)/bin/lowntfs-3g /usr/local/bin/lowntfs-3g 2>/dev/null || true",
+            "/bin/cp \(src)/bin/ntfsfix /usr/local/bin/ntfsfix 2>/dev/null || true",
+            "/bin/cp \(src)/sbin/mkntfs /usr/local/sbin/mkntfs 2>/dev/null || true",
+            "/bin/cp \(src)/lib/libntfs-3g* /usr/local/lib/ 2>/dev/null || true",
+            "/bin/chmod 755 /usr/local/bin/ntfs-3g /usr/local/bin/lowntfs-3g /usr/local/bin/ntfsfix /usr/local/sbin/mkntfs 2>/dev/null || true",
+        ])
+        try Shell.admin(steps.joined(separator: "\n"))
         let check = Shell.run("/usr/local/bin/ntfs-3g", ["--version"])
         guard check.code == 0 else {
-            throw NTFSOpError.commandFailed("引擎安装后自检失败（可能未安装 FUSE-T）：\n\(check.err)\(check.out)")
+            throw NTFSOpError.commandFailed("引擎安装后自检失败：\n\(check.err)\(check.out)")
         }
         Log.write("engine installed: \(check.out.trimmingCharacters(in: .whitespacesAndNewlines))")
     }
