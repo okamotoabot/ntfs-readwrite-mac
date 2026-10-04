@@ -199,7 +199,7 @@ final class VolumeManager {
         parts.append("/usr/sbin/diskutil mount \(Shell.shq(v.device))")
         do {
             // fstab 写入与重新挂载合并为一次提权，避免连续弹两次密码框
-            try Shell.admin(parts.joined(separator: "\n"))
+            _ = try Shell.admin(parts.joined(separator: "\n"))
         } catch {
             throw classify(error)
         }
@@ -246,7 +246,7 @@ final class VolumeManager {
         /usr/sbin/diskutil mount \(Shell.shq(v.device))
         """
         do {
-            try Shell.admin(script)
+            _ = try Shell.admin(script)
         } catch {
             throw classify(error)
         }
@@ -279,7 +279,7 @@ final class VolumeManager {
         exit 1
         """
         do {
-            try Shell.admin(script)
+            _ = try Shell.admin(script)
         } catch {
             // 失败时尽量把卷恢复成只读挂载，避免磁盘“消失”
             _ = Shell.run("/usr/sbin/diskutil", ["mount", v.device])
