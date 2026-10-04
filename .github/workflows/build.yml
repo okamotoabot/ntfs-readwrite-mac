@@ -11,7 +11,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Show default environment
+      - name: Build ntfs-3g engine (fuse-t)
+        run: bash ci/build_engine.sh
+
+      - name: Show environment
         run: |
           sw_vers
           xcodebuild -version
