@@ -34,10 +34,16 @@ jobs:
       - name: Build (bash build.sh)
         run: bash build.sh
 
-      - name: Upload .app artifact
+      - name: Package DMG and PKG
+        run: bash ci/package.sh
+
+      - name: Upload dist artifact
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: NTFSReadWrite-app
-          path: build/*.app
+          name: NTFSReadWrite-dist
+          path: |
+            build/*.dmg
+            build/*-installer.pkg
+            build/*.app
           if-no-files-found: error
