@@ -31,6 +31,10 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
 cp "build/${EXEC_NAME}" "$APP/Contents/MacOS/${EXEC_NAME}"
+if [ -d "Resources/engine" ]; then
+  cp -R "Resources/engine" "$APP/Contents/Resources/engine"
+  echo "已捆绑用户态 NTFS 引擎（ntfs-3g + FUSE-T）"
+fi
 codesign --force --sign - "$APP"
 
 echo
