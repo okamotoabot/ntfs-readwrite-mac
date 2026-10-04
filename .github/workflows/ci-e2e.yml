@@ -1,0 +1,13 @@
+name: ci-e2e
+
+on:
+  workflow_dispatch:
+
+jobs:
+  e2e:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Functional test (real mount + file IO via app code)
+        run: bash ci/test_functional.sh
