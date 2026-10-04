@@ -43,7 +43,7 @@ jobs:
             curl -fL --retry 3 -o /tmp/n3.tgz https://github.com/tuxera/ntfs-3g/archive/refs/tags/2022.10.3.tar.gz
           cd /tmp && tar xzf n3.tgz && cd ntfs-3g-*
           ./autogen.sh
-          PKG_CONFIG_PATH=/usr/local/lib/pkgconfig ./configure --prefix=/usr/local --exec-prefix=/usr/local --with-fuse=external
+          PKG_CONFIG_PATH=/usr/local/lib/pkgconfig CFLAGS="-D_FILE_OFFSET_BITS=64" ./configure --prefix=/usr/local --exec-prefix=/usr/local --with-fuse=external
           make -j4
           sudo make install
           /usr/local/bin/ntfs-3g --version
