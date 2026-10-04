@@ -58,6 +58,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.removeAllItems()
         let volumes = vm.scan()
 
+        if !vm.engineInstalled() {
+            let warn = NSMenuItem(title: "⚠️ 未安装用户态 NTFS 引擎 — 点此安装",
+                                  action: #selector(installEngine(_:)), keyEquivalent: "")
+            warn.target = self
+            menu.addItem(warn)
+            menu.addItem(.separator())
+        }
+
         if volumes.isEmpty {
             menu.addItem(NSMenuItem(title: "未检测到已挂载的 NTFS 磁盘", action: nil, keyEquivalent: ""))
             menu.addItem(.separator())
@@ -155,6 +163,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         runOp {
             try self.vm.eject(v)
             return nil
+        }
+    }
+
+    @objc private func installEngine(_ sender: NSMenuItem) {
+        runOp {
+            try self.vm.installEngine()
+            return "用户态 NTFS 引擎安装完成。\n现在插入 NTFS 磁盘后点「以读写方式重新挂载」即可获得写权限。"
         }
     }
 
