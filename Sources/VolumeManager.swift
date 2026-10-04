@@ -108,8 +108,11 @@ enum Shell {
             let errText = String(decoding: errData, as: UTF8.self)
             if p.terminationStatus == 0 {
                 let outData = outPipe.fileHandleForReading.readDataToEndOfFile()
-                return String(decoding: outData, as: UTF8.self)
+                let outText = String(decoding: outData, as: UTF8.self)
+                print("[admin exit=0]\(outText)\(errText)")
+                return outText
             }
+            print("[admin exit=\(p.terminationStatus)] \(errText)")
             throw NTFSOpError.commandFailed(errText.trimmingCharacters(in: .whitespacesAndNewlines))
         }
         let escaped = script
@@ -347,6 +350,12 @@ final class VolumeManager {
         fi
         """)
         // 4) 全部失败：回滚 fstab，恢复只读挂载
+        parts.append("""
+        echo '--- all engines failed, diagnostics ---' >&2
+        /sbin/mount | /usr/bin/grep -iE 'ntfs|fuse|\\(nfs' >&2 || true
+        /bin/ls -la /Volumes >&2 || true
+        /usr/local/bin/ntfs-3g --version >&2 2>&1 || echo 'ntfs-3g missing or broken' >&2
+        """)
         if let uuid = uuid {
             parts.append("/usr/bin/sed -i '' -e \(Shell.shq("/^UUID=\(uuid.uppercased())[[:space:]]/d")) \(fstabPath) 2>/dev/null || true")
         }
