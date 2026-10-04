@@ -9,7 +9,7 @@
 
 ## 下载（免编译）
 
-到 [Releases](https://github.com/xiaruihong1-bot/ntfs-readwrite-mac/releases/latest) 下载 `NTFSReadWrite-v1.0.0.app.zip`，解压后把 `NTFS 读写助手.app` 拖进「应用程序」即可。
+到 [Releases](https://github.com/okamotoabot/ntfs-readwrite-mac/releases/latest) 下载 `NTFSReadWrite-v1.0.0.app.zip`，解压后把 `NTFS 读写助手.app` 拖进「应用程序」即可。
 
 > 首次打开若提示"无法验证开发者"：右键点击 App → 打开，或在终端执行
 > `xattr -cr "/Applications/NTFS 读写助手.app"`。
