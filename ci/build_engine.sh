@@ -4,8 +4,6 @@
 # 运行前提：安装了 Xcode 命令行工具；Homebrew（CI 自带）
 set -euo pipefail
 ENGINE_DIR="$(cd "$(dirname "$0")/.." && pwd)/Resources/engine"
-
-ENGINE_DIR="Resources/engine"
 rm -rf "$ENGINE_DIR"
 mkdir -p "$ENGINE_DIR/bin" "$ENGINE_DIR/sbin" "$ENGINE_DIR/lib"
 
