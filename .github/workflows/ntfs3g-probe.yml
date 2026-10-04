@@ -51,7 +51,7 @@ jobs:
       - name: Create NTFS disk image
         run: |
           dd if=/dev/zero of=/tmp/ntfs.img bs=1048576 count=64
-          /usr/local/bin/mkntfs -F -L NTFSTEST /tmp/ntfs.img
+          /usr/local/sbin/mkntfs -F -L NTFSTEST /tmp/ntfs.img
 
       - name: Attach image and mount with ntfs-3g
         run: |
