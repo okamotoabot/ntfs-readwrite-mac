@@ -109,9 +109,20 @@ check("识别内置驱动挂载的只读卷") {
 
 check("一键读写（内置驱动→mount→引擎 完整回退链）") {
     guard let v = vol else { return false }
-    let nv = try vm.enableReadWrite(v)
-    print("after: ro=\(nv.readOnly) fuse=\(nv.isFuseT) at \(nv.mountPath)")
-    return !nv.readOnly
+    do {
+        let nv = try vm.enableReadWrite(v)
+        print("after: ro=\(nv.readOnly) fuse=\(nv.isFuseT) at \(nv.mountPath)")
+        return !nv.readOnly
+    } catch {
+        print("chain threw: \(error)")
+        print("--- mount table ---")
+        print(Shell.run("/sbin/mount", []).out)
+        print("--- /etc/fstab ---")
+        print((try? String(contentsOfFile: "/etc/fstab", encoding: .utf8)) ?? "(none)")
+        print("--- diskutil info ---")
+        print(Shell.run("/usr/sbin/diskutil", ["info", dev]).out)
+        throw error
+    }
 }
 
 let mp = "/Volumes/E2ETEST"
