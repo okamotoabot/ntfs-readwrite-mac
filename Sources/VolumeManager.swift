@@ -88,7 +88,30 @@ enum Shell {
 
     /// 通过 osascript “do shell script ... with administrator privileges” 以 root 执行 sh 脚本。
     /// 这是系统自带的提权途径，不引入任何第三方组件。
+    /// CI 测试：设置 NTFSRW_TEST_ADMIN=1 时改用 sudo -n（GitHub runner 免密 sudo），避免交互式密码框。
     static func admin(_ script: String) throws -> String {
+        if ProcessInfo.processInfo.environment["NTFSRW_TEST_ADMIN"] == "1" {
+            let p = Process()
+            p.executableURL = URL(fileURLWithPath: "/usr/bin/sudo")
+            p.arguments = ["-n", "/bin/bash", "-c", script]
+            let outPipe = Pipe()
+            let errPipe = Pipe()
+            p.standardOutput = outPipe
+            p.standardError = errPipe
+            do {
+                try p.run()
+            } catch {
+                throw NTFSOpError.commandFailed("\(error)")
+            }
+            let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
+            p.waitUntilExit()
+            let errText = String(decoding: errData, as: UTF8.self)
+            if p.terminationStatus == 0 {
+                let outData = outPipe.fileHandleForReading.readDataToEndOfFile()
+                return String(decoding: outData, as: UTF8.self)
+            }
+            throw NTFSOpError.commandFailed(errText.trimmingCharacters(in: .whitespacesAndNewlines))
+        }
         let escaped = script
             .replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "\"", with: "\\\"")
