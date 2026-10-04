@@ -18,7 +18,7 @@ final class VolumeItem: NSMenuItem {
         super.init(title: "", action: nil, keyEquivalent: "")
     }
 
-    required init?(coder: NSCoder) {
+    required init(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
     }
 }
