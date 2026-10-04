@@ -290,6 +290,8 @@ final class VolumeManager {
             _ = Shell.run("/usr/sbin/diskutil", ["mount", v.device])
             throw classify(error)
         }
+        // FUSE-T 的 NFS 回环注册是异步的，稍候再校验
+        Thread.sleep(forTimeInterval: 1)
         guard let nv = verify(v), !nv.readOnly else {
             throw NTFSOpError.stillReadOnly("ntfs-3g 挂载后未能确认写权限。")
         }
@@ -345,6 +347,7 @@ final class VolumeManager {
           /usr/sbin/diskutil unmount force \(mp) >/dev/null 2>&1
           /bin/mkdir -p \(mp)
           if /usr/local/bin/ntfs-3g \(dev) \(mp) -o \(Shell.shq("volname=\(volname),allow_other")); then
+            sleep 1
             exit 0
           fi
         fi
@@ -374,7 +377,14 @@ final class VolumeManager {
             }
             throw converted
         }
-        if let nv = verify(v), !nv.readOnly {
+        // 链路报告成功但校验失败（NFS 注册竞态等）时，用独立引擎路径再试一次
+        var nv = verify(v)
+        if nv == nil || nv!.readOnly {
+            Log.write("chain ok but verify failed — retrying standalone engine mount")
+            Thread.sleep(forTimeInterval: 1)
+            nv = try? mountWithNTFS3G(v)
+        }
+        if let nv = nv, !nv.readOnly {
             Log.write("enableReadWrite ok")
             return nv
         }
