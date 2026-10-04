@@ -1,0 +1,23 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build (bash build.sh)
+        run: bash build.sh
+
+      - name: Upload .app artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: NTFSReadWrite-app
+          path: build/*.app
+          if-no-files-found: error
