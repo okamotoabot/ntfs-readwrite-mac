@@ -12,20 +12,20 @@ jobs:
           sw_vers
           uname -m
 
-      - name: Discover formulas
+      - name: Inspect ntfs-3g formula
         run: |
-          brew search ntfs || true
-          brew search fuse-t || true
+          brew info ntfs-3g || true
+          brew cat ntfs-3g | grep -E "depends_on|uses_from_macos|conflicts" || true
 
       - name: Install fuse-t and ntfs-3g
         run: |
           brew install --cask fuse-t
-          brew install ntfs-3g
+          unset HOMEBREW_FORBID_PACKAGES_FROM_SOURCE
+          brew install --build-from-source ntfs-3g
 
       - name: Check installed binaries
         run: |
           ls -l /opt/homebrew/bin/ntfs-3g /opt/homebrew/bin/mkntfs || true
-          ls /Library/Filesystems 2>/dev/null | grep -i fuse || true
           /opt/homebrew/bin/ntfs-3g --version || true
 
       - name: Create NTFS disk image
@@ -39,11 +39,12 @@ jobs:
           OUT=$(hdiutil attach -imagekey diskimage-class=CRawDiskImages -nomount /tmp/ntfs.img)
           echo "$OUT"
           DISK=$(echo "$OUT" | head -1 | awk '{print $1}')
-          echo "DISK=$DISK"
           if [ -e "${DISK}s1" ]; then DEV="${DISK}s1"; else DEV="$DISK"; fi
-          echo "DEV=$DEV"
+          echo "DEV=$DEV" >> "$GITHUB_ENV"
+          echo "DISK=$DISK" >> "$GITHUB_ENV"
           sudo mkdir -p /Volumes/ntfstest
-          sudo /opt/homebrew/bin/ntfs-3g "$DEV" /Volumes/ntfstest -o volname=NTFSTEST
+          sudo /opt/homebrew/bin/ntfs-3g "$DEV" /Volumes/ntfstest -o volname=NTFSTEST,allow_other || \
+            sudo /opt/homebrew/bin/ntfs-3g "$DEV" /Volumes/ntfstest -o volname=NTFSTEST
           sleep 2
           mount | grep -i ntfs || true
 
@@ -51,10 +52,10 @@ jobs:
         run: |
           sudo bash -c 'echo "ntfs-3g works on $(sw_vers -productVersion)" > /Volumes/ntfstest/hello.txt'
           sudo cat /Volumes/ntfstest/hello.txt
-          sudo bash -c 'mkdir /Volumes/ntfstest/dir1 && echo abc > /Volumes/ntfstest/dir1/f2.txt && cat /Volumes/ntfstest/dir1/f2.txt && rm /Volumes/ntfstest/hello.txt && ls -la /Volumes/ntfstest'
+          sudo bash -c 'mkdir /Volumes/ntfstest/dir1 && echo abc > /Volumes/ntfstest/dir1/f2.txt && cat /Volumes/ntfstest/dir1/f2.txt && rm /Volumes/ntfstest/dir1/f2.txt && rmdir /Volumes/ntfstest/dir1 && ls -la /Volumes/ntfstest'
 
-      - name: Unmount and eject
+      - name: Unmount and detach
         if: always()
         run: |
-          sudo umount /Volumes/ntfstest || sudo diskutil eject /dev/$(diskutil list | grep -B0 NTFSTEST | head -1) || true
-          hdiutil detach $(hdiutil info | grep /tmp/ntfs.img | awk '{print $1}') || true
+          sudo umount /Volumes/ntfstest || true
+          if [ -n "${{ env.DISK }}" ]; then hdiutil detach "${{ env.DISK }}" || true; fi
