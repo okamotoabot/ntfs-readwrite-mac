@@ -40,7 +40,8 @@ enum NTFSOpError: LocalizedError {
 
             可能原因：
             · 当前 macOS 版本的内置 NTFS 驱动已不再提供写入能力（该能力一直是实验性的）；
-            · 卷被标记为脏，系统拒绝写入。
+            · 卷被标记为脏，系统拒绝写入；
+            · Windows 的快速启动/休眠锁定了卷（需要 Windows 完整关机一次）。
 
             \(message)
             """
@@ -136,11 +137,15 @@ enum Shell {
         let errText = String(decoding: errData, as: UTF8.self)
         if p.terminationStatus == 0 {
             let outData = outPipe.fileHandleForReading.readDataToEndOfFile()
-            return String(decoding: outData, as: UTF8.self)
+            let outText = String(decoding: outData, as: UTF8.self)
+            Log.write("[admin ok] \((outText + " " + errText).trimmingCharacters(in: .whitespacesAndNewlines))")
+            return outText
         }
         if errText.contains("User canceled") || errText.contains("(-128)") {
+            Log.write("[admin cancelled]")
             throw NTFSOpError.userCancelled
         }
+        Log.write("[admin failed] \(errText.trimmingCharacters(in: .whitespacesAndNewlines))")
         throw NTFSOpError.commandFailed(errText.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
@@ -389,11 +394,16 @@ final class VolumeManager {
             try Shell.admin(parts.joined(separator: "\n"))
         } catch {
             let converted = classify(error)
-            if case NTFSOpError.commandFailed = converted {
+            switch converted {
+            case NTFSOpError.userCancelled, NTFSOpError.dirtyVolume:
+                throw converted
+            case NTFSOpError.commandFailed(let detail):
+                // 保留引擎/命令的真实输出，弹窗与日志都能看到根因
                 let hint = engineInstalled() ? "" : "\n提示：用户态 NTFS 引擎未安装，可在菜单中安装后再试。"
-                throw NTFSOpError.stillReadOnly("内置驱动与用户态引擎均未能获得写权限。\(hint)")
+                throw NTFSOpError.stillReadOnly("内置驱动与用户态引擎均未能获得写权限。\n\n各阶段详细输出：\n\(detail)\(hint)")
+            default:
+                throw converted
             }
-            throw converted
         }
         // 链路报告成功但校验失败（NFS 注册竞态等）时，用独立引擎路径再试一次
         var nv = verify(v)
@@ -487,7 +497,8 @@ final class VolumeManager {
     private func classify(_ error: Error) -> Error {
         guard case NTFSOpError.commandFailed(let message) = error else { return error }
         let low = message.lowercased()
-        if low.contains("dirty") || low.contains("unclean") || low.contains("not unmounted") {
+        if low.contains("hibernat") || low.contains("unsafe state") || low.contains("fast restart")
+            || low.contains("dirty") || low.contains("unclean") || low.contains("not unmounted") {
             return NTFSOpError.dirtyVolume(message)
         }
         return error
