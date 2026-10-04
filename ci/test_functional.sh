@@ -12,5 +12,5 @@ xcrun swiftc -O -target "$(uname -m)-apple-macos13.0" \
   Sources/Log.swift Sources/VolumeManager.swift ci/main.swift \
   -o build/ntfsrw_test
 
-NTFSRW_TEST_ADMIN=1 build/ntfsrw_test
+NTFSRW_TEST_ADMIN=1 NTFSRW_ENGINE_DIR="$(pwd)/Resources/engine" build/ntfsrw_test
 echo "==== 功能测试完成 ===="
