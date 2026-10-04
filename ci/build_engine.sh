@@ -3,7 +3,7 @@
 # 供 App 捆绑分发。GPLv2：源码位于 https://github.com/tuxera/ntfs-3g
 # 运行前提：安装了 Xcode 命令行工具；Homebrew（CI 自带）
 set -euo pipefail
-cd "$(dirname "$0")/.."
+ENGINE_DIR="$(cd "$(dirname "$0")/.." && pwd)/Resources/engine"
 
 ENGINE_DIR="Resources/engine"
 rm -rf "$ENGINE_DIR"
