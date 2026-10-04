@@ -56,7 +56,8 @@ jobs:
       - name: Attach image and mount with ntfs-3g
         run: |
           set -x
-          OUT=$(hdiutil attach -imagekey diskimage-class=CRawDiskImages -nomount /tmp/ntfs.img)
+          hdiutil convert /tmp/ntfs.img -format UDRW -o /tmp/ntfs.dmg
+          OUT=$(hdiutil attach -nomount /tmp/ntfs.dmg)
           echo "$OUT"
           DISK=$(echo "$OUT" | head -1 | awk '{print $1}')
           if [ -e "${DISK}s1" ]; then DEV="${DISK}s1"; else DEV="$DISK"; fi
