@@ -12,17 +12,29 @@ jobs:
           sw_vers
           uname -m
 
-      - name: Install fuse-t and build tools
+      - name: Install fuse-t, pkg-config and build tools
         run: |
           brew install --cask fuse-t
           unset HOMEBREW_FORBID_PACKAGES_FROM_SOURCE
-          brew install autoconf automake libtool pkg-config
+          brew install pkgconf autoconf automake libtool || true
+          brew install autoconf automake libtool
 
-      - name: Verify fuse-t install layout
+      - name: Create fuse.pc shim for fuse-t
         run: |
-          ls /usr/local/lib | grep -i fuse || true
-          ls /usr/local/include/fuse 2>/dev/null || true
-          ls /usr/local/lib/pkgconfig 2>/dev/null || true
+          sudo tee /usr/local/lib/pkgconfig/fuse.pc > /dev/null <<'EOF'
+          prefix=/usr/local
+          libdir=${prefix}/lib
+          includedir=${prefix}/include
+
+          Name: fuse
+          Description: FUSE 2.x compat shim pointing at FUSE-T
+          Version: 2.9.9
+          Libs: -L${libdir} -lfuse-t
+          Cflags: -I${includedir}/fuse
+          EOF
+          cat /usr/local/lib/pkgconfig/fuse.pc
+          PKG_CONFIG_PATH=/usr/local/lib/pkgconfig pkg-config --modversion fuse
+          PKG_CONFIG_PATH=/usr/local/lib/pkgconfig pkg-config --libs --cflags fuse
 
       - name: Build ntfs-3g from source against fuse-t
         run: |
@@ -31,10 +43,7 @@ jobs:
             curl -fL --retry 3 -o /tmp/n3.tgz https://github.com/tuxera/ntfs-3g/archive/refs/tags/2022.10.3.tar.gz
           cd /tmp && tar xzf n3.tgz && cd ntfs-3g-*
           ./autogen.sh
-          ./configure --prefix=/usr/local --exec-prefix=/usr/local \
-            --with-fuse=external \
-            FUSE_CFLAGS="-I/usr/local/include/fuse" \
-            FUSE_LIBS="-L/usr/local/lib -lfuse"
+          PKG_CONFIG_PATH=/usr/local/lib/pkgconfig ./configure --prefix=/usr/local --exec-prefix=/usr/local --with-fuse=external
           make -j4
           sudo make install
           /usr/local/bin/ntfs-3g --version
@@ -42,7 +51,7 @@ jobs:
       - name: Create NTFS disk image
         run: |
           dd if=/dev/zero of=/tmp/ntfs.img bs=1048576 count=64
-          /usr/local/bin/mkntfs -F -L NTFSTEST /tmp/ntfs.img || /opt/homebrew/bin/mkntfs -F -L NTFSTEST /tmp/ntfs.img
+          /usr/local/bin/mkntfs -F -L NTFSTEST /tmp/ntfs.img
 
       - name: Attach image and mount with ntfs-3g
         run: |
