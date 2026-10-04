@@ -44,6 +44,17 @@ cp /usr/local/sbin/mkntfs "$ENGINE_DIR/sbin/" 2>/dev/null || true
 cp /usr/local/lib/libntfs-3g*.dylib* "$ENGINE_DIR/lib/" 2>/dev/null || true
 curl -fL -o "$ENGINE_DIR/LICENSE.GPL" https://www.gnu.org/licenses/old-licenses/gpl-2.0.txt || true
 
+# 捆绑 FUSE-T 官方签名 pkg（用户机器上由 App 的引擎安装器用 installer -pkg 静默安装，无需 Homebrew）
+APILATEST=$(curl -sfL https://api.github.com/repos/macos-fuse-t/fuse-t/releases/latest || true)
+PKGURL=$(printf '%s' "$APILATEST" | /usr/bin/grep -o 'https://[^"]*\.pkg' | /usr/bin/head -1 || true)
+if [ -n "${PKGURL:-}" ]; then
+  curl -fL --retry 3 -o "$ENGINE_DIR/FUSE-T.pkg" "$PKGURL"
+  echo "bundled FUSE-T pkg: $PKGURL"
+else
+  echo "WARN: could not resolve FUSE-T pkg URL" >&2
+fi
+curl -fL -o "$ENGINE_DIR/LICENSE.FUSE-T" https://raw.githubusercontent.com/macos-fuse-t/fuse-t/main/LICENSE || true
+
 echo "---- engine files ----"
 find "$ENGINE_DIR" -type f
 /usr/local/bin/ntfs-3g --version
