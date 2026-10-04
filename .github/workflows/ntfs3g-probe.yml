@@ -20,7 +20,7 @@ jobs:
       - name: Install fuse-t and ntfs-3g
         run: |
           brew install --cask fuse-t
-          brew install ntfs-3g-mac
+          brew install ntfs-3g
 
       - name: Check installed binaries
         run: |
