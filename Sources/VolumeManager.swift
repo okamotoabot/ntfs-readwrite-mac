@@ -7,6 +7,7 @@ struct NTFSVolume {
     var device: String
     var readOnly: Bool
     var uuid: String?
+    var isFuseT: Bool = false
 }
 
 enum NTFSOpError: LocalizedError {
@@ -14,6 +15,7 @@ enum NTFSOpError: LocalizedError {
     case commandFailed(String)
     case dirtyVolume(String)
     case stillReadOnly(String)
+    case engineMissing
 
     var errorDescription: String? {
         switch self {
@@ -41,6 +43,14 @@ enum NTFSOpError: LocalizedError {
             · 卷被标记为脏，系统拒绝写入。
 
             \(message)
+            """
+        case .engineMissing:
+            return """
+            未安装用户态 NTFS 引擎。
+
+            请点击菜单栏图标，选择「安装用户态 NTFS 引擎」。\
+            该引擎基于开源的 ntfs-3g 与 FUSE-T，不安装任何内核扩展、无需关闭 SIP，\
+            在内置驱动不支持写入的系统（如 macOS 26/27）上提供读写能力。
             """
         }
     }
@@ -136,17 +146,26 @@ final class VolumeManager {
         return result.sorted { $0.name < $1.name }
     }
 
+    /// 检测某挂载点是否为 NTFS：内置驱动（ntfs）或用户态引擎（FUSE-T 以 NFS 回环呈现，来源形如 fuse-t:/卷名）。
     func volumeAt(_ path: String, fallbackName: String? = nil) -> NTFSVolume? {
         var st = statfs()
         guard statfs(path, &st) == 0 else { return nil }
-        guard tupleString(&st.f_fstypename).lowercased() == "ntfs" else { return nil }
+        let fstype = tupleString(&st.f_fstypename).lowercased()
+        let mntfrom = tupleString(&st.f_mntfromname)
+        let isBuiltin = fstype == "ntfs"
+        let isFuseT = fstype == "nfs" && mntfrom.lowercased().hasPrefix("fuse-t:/")
+        guard isBuiltin || isFuseT else { return nil }
         let flags = UInt32(truncatingIfNeeded: st.f_flags)
         let readOnly = (flags & UInt32(MNT_RDONLY)) != 0
         let mountPath = tupleString(&st.f_mntonname)
-        let device = tupleString(&st.f_mntfromname)
         var name = fallbackName ?? URL(fileURLWithPath: mountPath).lastPathComponent
         if name.isEmpty { name = "NTFS 磁盘" }
-        return NTFSVolume(name: name, mountPath: mountPath, device: device, readOnly: readOnly, uuid: nil)
+        return NTFSVolume(name: name,
+                          mountPath: mountPath,
+                          device: mntfrom,
+                          readOnly: readOnly,
+                          uuid: nil,
+                          isFuseT: isFuseT)
     }
 
     func volumeUUID(forDevice device: String) -> String? {
@@ -184,44 +203,151 @@ final class VolumeManager {
         fstabRWUUIDs().contains(uuid.uppercased())
     }
 
+    // MARK: - 用户态引擎（ntfs-3g + FUSE-T）
+
+    func engineInstalled() -> Bool {
+        let fm = FileManager.default
+        return fm.isExecutableFile(atPath: "/usr/local/bin/ntfs-3g")
+            && fm.fileExists(atPath: "/usr/local/lib/libfuse-t.dylib")
+    }
+
+    /// 把随 App 内置的引擎文件安装到 /usr/local（需要管理员授权一次）。
+    func installEngine() throws {
+        guard let res = Bundle.main.resourceURL else {
+            throw NTFSOpError.commandFailed("无法定位应用资源目录。")
+        }
+        let engine = res.appendingPathComponent("engine")
+        guard FileManager.default.fileExists(atPath: engine.appendingPathComponent("bin/ntfs-3g").path) else {
+            throw NTFSOpError.commandFailed("""
+            本应用内没有内置引擎文件。
+            若是本地构建：请先运行 ci/build_engine.sh 生成 Resources/engine 后重新打包。
+            """)
+        }
+        let src = Shell.shq(engine.path)
+        let script = """
+        /bin/mkdir -p /usr/local/bin /usr/local/sbin /usr/local/lib
+        /bin/cp \(src)/bin/ntfs-3g /usr/local/bin/ntfs-3g
+        /bin/cp \(src)/bin/lowntfs-3g /usr/local/bin/lowntfs-3g 2>/dev/null || true
+        /bin/cp \(src)/bin/ntfsfix /usr/local/bin/ntfsfix 2>/dev/null || true
+        /bin/cp \(src)/sbin/mkntfs /usr/local/sbin/mkntfs 2>/dev/null || true
+        /bin/cp \(src)/lib/libntfs-3g* /usr/local/lib/ 2>/dev/null || true
+        /bin/chmod 755 /usr/local/bin/ntfs-3g /usr/local/bin/lowntfs-3g /usr/local/bin/ntfsfix /usr/local/sbin/mkntfs 2>/dev/null || true
+        """
+        try Shell.admin(script)
+        let check = Shell.run("/usr/local/bin/ntfs-3g", ["--version"])
+        guard check.code == 0 else {
+            throw NTFSOpError.commandFailed("引擎安装后自检失败（可能未安装 FUSE-T）：\n\(check.err)\(check.out)")
+        }
+        Log.write("engine installed: \(check.out.trimmingCharacters(in: .whitespacesAndNewlines))")
+    }
+
+    /// 用 ntfs-3g 以读写挂载（FUSE-T 用户态，无内核扩展）。
+    @discardableResult
+    func mountWithNTFS3G(_ v: NTFSVolume) throws -> NTFSVolume {
+        guard engineInstalled() else { throw NTFSOpError.engineMissing }
+        Log.write("ntfs-3g mount: \(v.name) \(v.device)")
+        let volname = v.name.replacingOccurrences(of: "/", with: ":")
+        let script = """
+        for i in 1 2 3; do
+          /usr/sbin/diskutil unmount \(Shell.shq(v.mountPath)) >/dev/null 2>&1
+          /bin/mkdir -p \(Shell.shq(v.mountPath))
+          if /usr/local/bin/ntfs-3g \(Shell.shq(v.device)) \(Shell.shq(v.mountPath)) -o \(Shell.shq("volname=\(volname),allow_other")); then
+            exit 0
+          fi
+          sleep 1
+        done
+        exit 1
+        """
+        do {
+            try Shell.admin(script)
+        } catch {
+            _ = Shell.run("/usr/sbin/diskutil", ["mount", v.device])
+            throw classify(error)
+        }
+        guard let nv = verify(v), !nv.readOnly else {
+            throw NTFSOpError.stillReadOnly("ntfs-3g 挂载后未能确认写权限。")
+        }
+        return nv
+    }
+
     // MARK: - 挂载操作
 
-    /// 推荐流程：写入 fstab（以后每次插入自动读写）+ 重新挂载。
+    /// 推荐流程：一次授权内依次尝试 内置驱动(fstab+diskutil) → mount -o rw → 用户态引擎。
+    /// 全部失败时回滚 fstab 并恢复只读挂载。
     @discardableResult
     func enableReadWrite(_ v: NTFSVolume) throws -> NTFSVolume {
         Log.write("enableReadWrite: \(v.name) \(v.device) \(v.mountPath)")
         let uuid = v.uuid ?? volumeUUID(forDevice: v.device)
+        let mp = Shell.shq(v.mountPath)
+        let dev = Shell.shq(v.device)
+        let volname = v.name.replacingOccurrences(of: "/", with: ":")
+
         var parts: [String] = []
-        if let uuid = uuid, !hasFstabRW(uuid) {
-            parts.append("/bin/echo \(Shell.shq("UUID=\(uuid.uppercased()) none ntfs rw,auto")) >> \(fstabPath)")
+        // 1) 内置驱动：写 fstab（幂等）+ diskutil 重挂载
+        if let uuid = uuid {
+            parts.append("""
+            if ! /usr/bin/grep -q '^UUID=\(uuid.uppercased())[[:space:]]' /etc/fstab 2>/dev/null; then
+              /bin/echo \(Shell.shq("UUID=\(uuid.uppercased()) none ntfs rw,auto")) >> \(fstabPath)
+            fi
+            """)
         }
-        parts.append("/usr/sbin/diskutil unmount \(Shell.shq(v.mountPath)) >/dev/null 2>&1")
-        parts.append("/usr/sbin/diskutil mount \(Shell.shq(v.device))")
+        parts.append("""
+        /usr/sbin/diskutil unmount \(mp) >/dev/null 2>&1
+        /usr/sbin/diskutil mount \(dev) >/dev/null 2>&1
+        LINE=$(/sbin/mount | /usr/bin/grep -F \(Shell.shq("on \(v.mountPath) (")) || true)
+        if [ -n "$LINE" ] && ! echo "$LINE" | /usr/bin/grep -q 'read-only'; then
+          exit 0
+        fi
+        """)
+        // 2) 内置驱动：mount -t ntfs -o rw（含竞态重试）
+        parts.append("""
+        for i in 1 2 3; do
+          /usr/sbin/diskutil unmount \(mp) >/dev/null 2>&1
+          /bin/mkdir -p \(mp)
+          if /sbin/mount -t ntfs -o rw \(dev) \(mp); then
+            exit 0
+          fi
+          sleep 1
+        done
+        """)
+        // 3) 用户态引擎：ntfs-3g + FUSE-T（macOS 26/27 的主力方案）
+        parts.append("""
+        if [ -x /usr/local/bin/ntfs-3g ] && [ -e /usr/local/lib/libfuse-t.dylib ]; then
+          /usr/sbin/diskutil unmount \(mp) >/dev/null 2>&1
+          /bin/mkdir -p \(mp)
+          if /usr/local/bin/ntfs-3g \(dev) \(mp) -o \(Shell.shq("volname=\(volname),allow_other")); then
+            exit 0
+          fi
+        fi
+        """)
+        // 4) 全部失败：回滚 fstab，恢复只读挂载
+        if let uuid = uuid {
+            parts.append("/usr/bin/sed -i '' -e \(Shell.shq("/^UUID=\(uuid.uppercased())[[:space:]]/d")) \(fstabPath) 2>/dev/null || true")
+        }
+        parts.append("""
+        /usr/sbin/diskutil mount \(dev) >/dev/null 2>&1 || true
+        exit 3
+        """)
+
         do {
-            // fstab 写入与重新挂载合并为一次提权，避免连续弹两次密码框
-            _ = try Shell.admin(parts.joined(separator: "\n"))
+            try Shell.admin(parts.joined(separator: "\n"))
         } catch {
-            throw classify(error)
+            let converted = classify(error)
+            if case NTFSOpError.commandFailed = converted {
+                let hint = engineInstalled() ? "" : "\n提示：用户态 NTFS 引擎未安装，可在菜单中安装后再试。"
+                throw NTFSOpError.stillReadOnly("内置驱动与用户态引擎均未能获得写权限。\(hint)")
+            }
+            throw converted
         }
         if let nv = verify(v), !nv.readOnly {
-            Log.write("enableReadWrite ok (diskutil/fstab)")
+            Log.write("enableReadWrite ok")
             return nv
         }
-        // 兜底：直接用 mount 命令以 rw 重挂载
-        do {
-            try remountWithMount(v)
-        } catch {
-            throw classify(error)
-        }
-        if let nv = verify(v), !nv.readOnly {
-            Log.write("enableReadWrite ok (mount)")
-            return nv
-        }
-        Log.write("enableReadWrite still read-only")
-        throw NTFSOpError.stillReadOnly("diskutil 与 mount 两种方式均未获得写权限。")
+        Log.write("enableReadWrite failed")
+        throw NTFSOpError.stillReadOnly("重新挂载后未能确认写权限。")
     }
 
-    /// 临时读写重挂载（不改 fstab，重新插入或重启后恢复只读）。
+    /// 临时读写重挂载（不改 fstab）。
     @discardableResult
     func remountReadWriteTemporary(_ v: NTFSVolume) throws -> NTFSVolume {
         Log.write("temp remount: \(v.name) \(v.device)")
@@ -230,10 +356,9 @@ final class VolumeManager {
         } catch {
             throw classify(error)
         }
-        guard let nv = verify(v), !nv.readOnly else {
-            throw NTFSOpError.stillReadOnly("mount 命令执行后仍为只读。")
-        }
-        return nv
+        if let nv = verify(v), !nv.readOnly { return nv }
+        // 内置写入不可用时退回用户态引擎
+        return try mountWithNTFS3G(v)
     }
 
     /// 移除 fstab 自动读写配置，并恢复只读挂载。
@@ -246,7 +371,7 @@ final class VolumeManager {
         /usr/sbin/diskutil mount \(Shell.shq(v.device))
         """
         do {
-            _ = try Shell.admin(script)
+            try Shell.admin(script)
         } catch {
             throw classify(error)
         }
@@ -254,6 +379,14 @@ final class VolumeManager {
     }
 
     func eject(_ v: NTFSVolume) throws {
+        if v.device.lowercased().hasPrefix("fuse-t:/") {
+            // FUSE-T 卷没有真实块设备，直接卸载挂载点
+            let r = Shell.run("/usr/sbin/diskutil", ["unmount", v.mountPath])
+            guard r.code == 0 else {
+                throw NTFSOpError.commandFailed(r.err.isEmpty ? r.out : r.err)
+            }
+            return
+        }
         let r = Shell.run("/usr/sbin/diskutil", ["eject", v.device])
         guard r.code == 0 else {
             throw NTFSOpError.commandFailed(r.err.isEmpty ? r.out : r.err)
@@ -262,6 +395,7 @@ final class VolumeManager {
 
     // MARK: - 私有
 
+    /// 校验挂载点当前是否为 NTFS（内置或 FUSE-T）并返回最新只读状态。
     private func verify(_ v: NTFSVolume) -> NTFSVolume? {
         volumeAt(v.mountPath, fallbackName: v.name)
     }
@@ -279,7 +413,7 @@ final class VolumeManager {
         exit 1
         """
         do {
-            _ = try Shell.admin(script)
+            try Shell.admin(script)
         } catch {
             // 失败时尽量把卷恢复成只读挂载，避免磁盘“消失”
             _ = Shell.run("/usr/sbin/diskutil", ["mount", v.device])
